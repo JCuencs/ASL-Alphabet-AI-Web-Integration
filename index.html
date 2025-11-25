@@ -146,6 +146,7 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
@@ -154,6 +155,7 @@ const API_URL = window.location.origin + '/api';
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
 let hands;
+let pose;
 let camera;
 const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('canvas');
@@ -173,6 +175,10 @@ let sameLetterCount = 0;
 const SAME_LETTER_THRESHOLD = 3;
 let selectedModel = 'lstm';
 
+// Store latest results from both models
+let latestHandsResults = null;
+let latestPoseResults = null;
+
 const toggleBtn = document.getElementById('toggle-btn');
 const resetBtn = document.getElementById('reset-btn');
 const speakBtn = document.getElementById('speak-btn');
@@ -182,11 +188,11 @@ toggleBtn.addEventListener('click', () => {
     
     if (predicting) {
         toggleBtn.textContent = 'Stop';
-        toggleBtn.style.backgroundColor = '#f44336'; // Red when active
+        toggleBtn.style.backgroundColor = '#f44336';
         sequence = [];
     } else {
         toggleBtn.textContent = 'Start';
-        toggleBtn.style.backgroundColor = '#6cbeed'; // Blue when inactive
+        toggleBtn.style.backgroundColor = '#6cbeed';
     }
     
     updatePredictionStatus();
@@ -206,16 +212,12 @@ speakBtn.addEventListener('click', () => {
     }
 });
 
-// Text-to-Speech function
 function speakText(text) {
-    // Cancel any ongoing speech
     window.speechSynthesis.cancel();
     
-    // Check if text forms a known word
     const knownWords = checkForWords(text);
     
     if (knownWords.length > 0) {
-        // Speak the words
         knownWords.forEach((word, index) => {
             setTimeout(() => {
                 const utterance = new SpeechSynthesisUtterance(word);
@@ -226,7 +228,6 @@ function speakText(text) {
             }, index * 1000);
         });
     } else {
-        // Spell out letter by letter
         for (let i = 0; i < text.length; i++) {
             setTimeout(() => {
                 const utterance = new SpeechSynthesisUtterance(text[i]);
@@ -239,40 +240,21 @@ function speakText(text) {
     }
 }
 
-// Check if letters form known words
 function checkForWords(text) {
     const commonWords = [
         'HELLO', 'HI', 'BYE', 'THANKS', 'PLEASE', 'YES', 'NO',
         'HELP', 'STOP', 'GO', 'COME', 'GOOD', 'BAD', 'OK',
-        'LOVE', 'LIKE', 'WANT', 'NEED', 'HAVE', 'GET', 'GIVE',
-        'MAKE', 'TAKE', 'SEE', 'LOOK', 'HEAR', 'LISTEN',
-        'SPEAK', 'TALK', 'SAY', 'TELL', 'ASK', 'ANSWER',
-        'KNOW', 'THINK', 'FEEL', 'BELIEVE', 'UNDERSTAND',
-        'EAT', 'DRINK', 'SLEEP', 'WAKE', 'WORK', 'PLAY',
-        'READ', 'WRITE', 'LEARN', 'TEACH', 'STUDY',
-        'WALK', 'RUN', 'JUMP', 'SIT', 'STAND', 'LIE',
-        'OPEN', 'CLOSE', 'START', 'END', 'BEGIN', 'FINISH',
-        'BIG', 'SMALL', 'LARGE', 'LITTLE', 'TALL', 'SHORT',
-        'LONG', 'WIDE', 'NARROW', 'THICK', 'THIN',
-        'HOT', 'COLD', 'WARM', 'COOL', 'WET', 'DRY',
-        'HAPPY', 'SAD', 'ANGRY', 'AFRAID', 'EXCITED',
-        'NOW', 'LATER', 'SOON', 'NEVER', 'ALWAYS', 'SOMETIMES',
-        'HERE', 'THERE', 'WHERE', 'WHEN', 'WHY', 'HOW', 'WHAT',
-        'WHO', 'WHICH', 'THIS', 'THAT', 'THESE', 'THOSE',
-        'ALL', 'SOME', 'MANY', 'FEW', 'MORE', 'LESS',
-        'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'TEN'
+        'LOVE', 'LIKE', 'WANT', 'NEED', 'HAVE', 'GET', 'GIVE'
     ];
     
     const textUpper = text.toUpperCase();
     const foundWords = [];
     
-    // Try to match the entire text first
     if (commonWords.includes(textUpper)) {
         foundWords.push(textUpper);
         return foundWords;
     }
     
-    // Try to find words within the text
     for (let word of commonWords) {
         if (textUpper.includes(word)) {
             foundWords.push(word);
@@ -327,7 +309,8 @@ async function checkBackendHealth() {
     }
 }
 
-async function initializeHands() {
+async function initializeMediaPipe() {
+    // Initialize Hands
     hands = new Hands({ 
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` 
     });
@@ -337,17 +320,43 @@ async function initializeHands() {
         minDetectionConfidence: 0.5, 
         minTrackingConfidence: 0.5 
     });
-    hands.onResults(onResults);
+    hands.onResults((results) => {
+        latestHandsResults = results;
+    });
+    
+    // Initialize Pose
+    pose = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+    pose.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+    pose.onResults((results) => {
+        latestPoseResults = results;
+    });
 }
 
-function extractKeypoints(results) {
-    let leftHand = Array(21*3).fill(0);
-    let rightHand = Array(21*3).fill(0);
+function extractKeypoints(handsResults, poseResults) {
+    // Extract pose keypoints (33 landmarks × 4 features = 132)
+    let poseArray = new Array(33 * 4).fill(0);
+    if (poseResults && poseResults.poseLandmarks) {
+        poseArray = [];
+        for (let landmark of poseResults.poseLandmarks) {
+            poseArray.push(landmark.x, landmark.y, landmark.z, landmark.visibility);
+        }
+    }
     
-    if (results.multiHandLandmarks && results.multiHandedness) {
-        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-            const handLandmarks = results.multiHandLandmarks[i];
-            const handedness = results.multiHandedness[i].label;
+    // Extract hand keypoints (21 landmarks × 3 features = 63 each)
+    let leftHand = new Array(21 * 3).fill(0);
+    let rightHand = new Array(21 * 3).fill(0);
+    
+    if (handsResults && handsResults.multiHandLandmarks && handsResults.multiHandedness) {
+        for (let i = 0; i < handsResults.multiHandLandmarks.length; i++) {
+            const handLandmarks = handsResults.multiHandLandmarks[i];
+            const handedness = handsResults.multiHandedness[i].label;
             
             const handArray = [];
             for (let lm of handLandmarks) {
@@ -362,15 +371,16 @@ function extractKeypoints(results) {
         }
     }
     
-    return [...leftHand, ...rightHand];
+    // Combine: pose (132) + left_hand (63) + right_hand (63) = 258 features
+    return [...poseArray, ...leftHand, ...rightHand];
 }
 
-function isValidGesture(results) {
-    return results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+function isValidGesture(handsResults, poseResults) {
+    return (handsResults && handsResults.multiHandLandmarks && handsResults.multiHandLandmarks.length > 0);
 }
 
-async function predict(keypoints, results) {
-    if (!predicting || !isValidGesture(results)) {
+async function predict(keypoints, handsResults, poseResults) {
+    if (!predicting || !isValidGesture(handsResults, poseResults)) {
         confidenceElement.textContent = 'Confidence: 0%';
         return;
     }
@@ -433,15 +443,26 @@ async function predict(keypoints, results) {
     }
 }
 
-function onResults(results) {
+async function onResults() {
     canvasElement.width = videoElement.videoWidth;
     canvasElement.height = videoElement.videoHeight;
     
     canvasCtx.save();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
-    if (results.multiHandLandmarks) {
-        for (const landmarks of results.multiHandLandmarks) {
+    // Draw pose landmarks
+    if (latestPoseResults && latestPoseResults.poseLandmarks) {
+        drawConnectors(canvasCtx, latestPoseResults.poseLandmarks, POSE_CONNECTIONS, { 
+            color: '#00FF00', lineWidth: 2 
+        });
+        drawLandmarks(canvasCtx, latestPoseResults.poseLandmarks, { 
+            color: '#FF0000', lineWidth: 1, radius: 2 
+        });
+    }
+    
+    // Draw hand landmarks
+    if (latestHandsResults && latestHandsResults.multiHandLandmarks) {
+        for (const landmarks of latestHandsResults.multiHandLandmarks) {
             drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { 
                 color: '#00FF00', lineWidth: 2 
             });
@@ -450,8 +471,8 @@ function onResults(results) {
             });
         }
         
-        const keypoints = extractKeypoints(results);
-        predict(keypoints, results);
+        const keypoints = extractKeypoints(latestHandsResults, latestPoseResults);
+        predict(keypoints, latestHandsResults, latestPoseResults);
     } else {
         confidenceElement.textContent = 'Confidence: 0%';
     }
@@ -459,11 +480,23 @@ function onResults(results) {
     canvasCtx.restore();
 }
 
+async function processFrame() {
+    // Send frame to both models
+    await hands.send({image: videoElement});
+    await pose.send({image: videoElement});
+    
+    // Draw results
+    onResults();
+    
+    // Continue processing
+    requestAnimationFrame(processFrame);
+}
+
 async function initializeCamera() {
     try {
         camera = new Camera(videoElement, {
-            onFrame: async () => { 
-                await hands.send({image: videoElement}); 
+            onFrame: async () => {
+                // This will be handled by processFrame
             },
             width: 1280,
             height: 720
@@ -474,6 +507,9 @@ async function initializeCamera() {
         
         await checkBackendHealth();
         
+        // Start processing loop
+        processFrame();
+        
     } catch (error) {
         console.error('Camera error:', error);
         statusElement.textContent = 'Camera access denied. Please allow camera access.';
@@ -481,7 +517,7 @@ async function initializeCamera() {
 }
 
 async function initialize() {
-    await initializeHands();
+    await initializeMediaPipe();
     await initializeCamera();
     updatePredictionStatus();
 }
