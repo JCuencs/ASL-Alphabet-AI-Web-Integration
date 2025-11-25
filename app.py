@@ -37,6 +37,7 @@ try:
     with open(SCALER_PATH, 'rb') as f:
         scaler = pickle.load(f)
     print(f"✓ Scaler loaded from {SCALER_PATH}")
+    print(f"✓ Scaler expects {scaler.n_features_in_} features")
 except Exception as e:
     print(f"⚠ Could not load scaler: {e}")
     scaler = None
@@ -57,17 +58,14 @@ models = {
 
 @app.route('/')
 def index():
-    
     return send_from_directory('.', 'index.html')
 
 @app.route('/<path:path>')
 def serve_static(path):
-    
     return send_from_directory('.', path)
 
 @app.route('/api/predict', methods=['POST'])
 def predict():
-    
     try:
         data = request.json
         
@@ -89,6 +87,27 @@ def predict():
             return jsonify({
                 'error': f'Sequence length must be {expected_length}, got {sequence.shape[0]}'
             }), 400
+        
+        # Get expected number of features from scaler
+        expected_features = scaler.n_features_in_ if scaler is not None else 258
+        current_features = sequence.shape[1]
+        
+        print(f"Received sequence shape: {sequence.shape}")
+        print(f"Expected features: {expected_features}, Got: {current_features}")
+        
+        # Handle feature mismatch by padding or truncating
+        if current_features != expected_features:
+            print(f"⚠ Feature count mismatch! Expected {expected_features}, got {current_features}")
+            
+            if current_features < expected_features:
+                # Pad with zeros
+                padding = np.zeros((expected_length, expected_features - current_features))
+                sequence = np.concatenate([sequence, padding], axis=1)
+                print(f"✓ Padded sequence to shape: {sequence.shape}")
+            else:
+                # Truncate
+                sequence = sequence[:, :expected_features]
+                print(f"✓ Truncated sequence to shape: {sequence.shape}")
         
         # Normalize using scaler if available
         if scaler is not None:
@@ -146,7 +165,8 @@ def get_models():
     return jsonify({
         'models': available_models,
         'alphabet': ALPHABET,
-        'scaler_loaded': scaler is not None
+        'scaler_loaded': scaler is not None,
+        'expected_features': scaler.n_features_in_ if scaler is not None else 258
     })
 
 @app.route('/api/health', methods=['GET'])
@@ -157,7 +177,8 @@ def health():
         'lstm_loaded': lstm_model is not None,
         'transformer_loaded': transformer_model is not None,
         'scaler_loaded': scaler is not None,
-        'alphabet_size': len(ALPHABET)
+        'alphabet_size': len(ALPHABET),
+        'expected_features': scaler.n_features_in_ if scaler is not None else 258
     })
 
 if __name__ == '__main__':
@@ -167,11 +188,12 @@ if __name__ == '__main__':
     print(f"LSTM Model: {'✓ Loaded' if lstm_model else '✗ Not loaded'}")
     print(f"Transformer Model: {'✓ Loaded' if transformer_model else '✗ Not loaded'}")
     print(f"Scaler: {'✓ Loaded' if scaler else '✗ Not loaded'}")
+    if scaler:
+        print(f"Expected Features: {scaler.n_features_in_}")
     print(f"Alphabet: {len(ALPHABET)} letters")
     print("="*60)
     print("\nStarting server on http://localhost:5000")
     print("Press Ctrl+C to stop\n")
     
-    if __name__ == '__main__':
-        port = int(os.environ.get('PORT', 5000))
-        app.run(host='0.0.0.0', port=port, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
