@@ -83,31 +83,20 @@ def predict():
         
         # Validate sequence shape
         expected_length = 30
+        expected_features = 258  # pose (132) + left_hand (63) + right_hand (63)
+        
         if sequence.shape[0] != expected_length:
             return jsonify({
                 'error': f'Sequence length must be {expected_length}, got {sequence.shape[0]}'
             }), 400
         
-        # Get expected number of features from scaler
-        expected_features = scaler.n_features_in_ if scaler is not None else 258
-        current_features = sequence.shape[1]
+        if sequence.shape[1] != expected_features:
+            return jsonify({
+                'error': f'Feature count must be {expected_features}, got {sequence.shape[1]}. '
+                        f'Ensure both pose and hand landmarks are being extracted.'
+            }), 400
         
-        print(f"Received sequence shape: {sequence.shape}")
-        print(f"Expected features: {expected_features}, Got: {current_features}")
-        
-        # Handle feature mismatch by padding or truncating
-        if current_features != expected_features:
-            print(f"⚠ Feature count mismatch! Expected {expected_features}, got {current_features}")
-            
-            if current_features < expected_features:
-                # Pad with zeros
-                padding = np.zeros((expected_length, expected_features - current_features))
-                sequence = np.concatenate([sequence, padding], axis=1)
-                print(f"✓ Padded sequence to shape: {sequence.shape}")
-            else:
-                # Truncate
-                sequence = sequence[:, :expected_features]
-                print(f"✓ Truncated sequence to shape: {sequence.shape}")
+        print(f"Received sequence shape: {sequence.shape} ✓")
         
         # Normalize using scaler if available
         if scaler is not None:
@@ -166,7 +155,7 @@ def get_models():
         'models': available_models,
         'alphabet': ALPHABET,
         'scaler_loaded': scaler is not None,
-        'expected_features': scaler.n_features_in_ if scaler is not None else 258
+        'expected_features': 258
     })
 
 @app.route('/api/health', methods=['GET'])
@@ -178,7 +167,7 @@ def health():
         'transformer_loaded': transformer_model is not None,
         'scaler_loaded': scaler is not None,
         'alphabet_size': len(ALPHABET),
-        'expected_features': scaler.n_features_in_ if scaler is not None else 258
+        'expected_features': 258
     })
 
 if __name__ == '__main__':
@@ -188,8 +177,7 @@ if __name__ == '__main__':
     print(f"LSTM Model: {'✓ Loaded' if lstm_model else '✗ Not loaded'}")
     print(f"Transformer Model: {'✓ Loaded' if transformer_model else '✗ Not loaded'}")
     print(f"Scaler: {'✓ Loaded' if scaler else '✗ Not loaded'}")
-    if scaler:
-        print(f"Expected Features: {scaler.n_features_in_}")
+    print(f"Expected Features: 258 (Pose: 132 + Hands: 126)")
     print(f"Alphabet: {len(ALPHABET)} letters")
     print("="*60)
     print("\nStarting server on http://localhost:5000")
