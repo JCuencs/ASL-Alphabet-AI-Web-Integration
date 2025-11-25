@@ -146,14 +146,15 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-const API_URL = window.location.origin + '/api';
+const API_URL = 'http://localhost:5000/api';
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
-let hands;
+let hands, pose;
 let camera;
 const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('canvas');
@@ -179,16 +180,9 @@ const speakBtn = document.getElementById('speak-btn');
 
 toggleBtn.addEventListener('click', () => { 
     predicting = !predicting;
-    
-    if (predicting) {
-        toggleBtn.textContent = 'Stop';
-        toggleBtn.style.backgroundColor = '#f44336'; // Red when active
-        sequence = [];
-    } else {
-        toggleBtn.textContent = 'Start';
-        toggleBtn.style.backgroundColor = '#6cbeed'; // Blue when inactive
-    }
-    
+    toggleBtn.textContent = predicting ? 'Stop' : 'Start';
+    toggleBtn.style.backgroundColor = predicting ? '#f44336' : '#6cbeed';
+    if (predicting) sequence = [];
     updatePredictionStatus();
 });
 
@@ -201,90 +195,7 @@ resetBtn.addEventListener('click', () => {
 
 speakBtn.addEventListener('click', () => {
     const text = predictionElement.textContent;
-    if (text && text !== '-') {
-        speakText(text);
-    }
-});
-
-// Text-to-Speech function
-function speakText(text) {
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
-    
-    // Check if text forms a known word
-    const knownWords = checkForWords(text);
-    
-    if (knownWords.length > 0) {
-        // Speak the words
-        knownWords.forEach((word, index) => {
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(word);
-                utterance.rate = 0.9;
-                utterance.pitch = 1;
-                utterance.volume = 1;
-                window.speechSynthesis.speak(utterance);
-            }, index * 1000);
-        });
-    } else {
-        // Spell out letter by letter
-        for (let i = 0; i < text.length; i++) {
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text[i]);
-                utterance.rate = 0.8;
-                utterance.pitch = 1;
-                utterance.volume = 1;
-                window.speechSynthesis.speak(utterance);
-            }, i * 600);
-        }
-    }
-}
-
-// Check if letters form known words
-function checkForWords(text) {
-    const commonWords = [
-        'HELLO', 'HI', 'BYE', 'THANKS', 'PLEASE', 'YES', 'NO',
-        'HELP', 'STOP', 'GO', 'COME', 'GOOD', 'BAD', 'OK',
-        'LOVE', 'LIKE', 'WANT', 'NEED', 'HAVE', 'GET', 'GIVE',
-        'MAKE', 'TAKE', 'SEE', 'LOOK', 'HEAR', 'LISTEN',
-        'SPEAK', 'TALK', 'SAY', 'TELL', 'ASK', 'ANSWER',
-        'KNOW', 'THINK', 'FEEL', 'BELIEVE', 'UNDERSTAND',
-        'EAT', 'DRINK', 'SLEEP', 'WAKE', 'WORK', 'PLAY',
-        'READ', 'WRITE', 'LEARN', 'TEACH', 'STUDY',
-        'WALK', 'RUN', 'JUMP', 'SIT', 'STAND', 'LIE',
-        'OPEN', 'CLOSE', 'START', 'END', 'BEGIN', 'FINISH',
-        'BIG', 'SMALL', 'LARGE', 'LITTLE', 'TALL', 'SHORT',
-        'LONG', 'WIDE', 'NARROW', 'THICK', 'THIN',
-        'HOT', 'COLD', 'WARM', 'COOL', 'WET', 'DRY',
-        'HAPPY', 'SAD', 'ANGRY', 'AFRAID', 'EXCITED',
-        'NOW', 'LATER', 'SOON', 'NEVER', 'ALWAYS', 'SOMETIMES',
-        'HERE', 'THERE', 'WHERE', 'WHEN', 'WHY', 'HOW', 'WHAT',
-        'WHO', 'WHICH', 'THIS', 'THAT', 'THESE', 'THOSE',
-        'ALL', 'SOME', 'MANY', 'FEW', 'MORE', 'LESS',
-        'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'TEN'
-    ];
-    
-    const textUpper = text.toUpperCase();
-    const foundWords = [];
-    
-    // Try to match the entire text first
-    if (commonWords.includes(textUpper)) {
-        foundWords.push(textUpper);
-        return foundWords;
-    }
-    
-    // Try to find words within the text
-    for (let word of commonWords) {
-        if (textUpper.includes(word)) {
-            foundWords.push(word);
-        }
-    }
-    
-    return foundWords;
-}
-
-document.getElementById('model-selector').addEventListener('change', (e) => {
-    selectedModel = e.target.value;
-    statusElement.textContent = `Switched to ${selectedModel.toUpperCase()} model`;
+    if (text && text !== '-') speakText(text);
 });
 
 function updatePredictionStatus() {
@@ -297,195 +208,148 @@ function updatePredictionStatus() {
     }
 }
 
-function handleResponsiveChart() {
-    const chartMobile = document.getElementById('chart-mobile');
-    const chartDesktop = document.getElementById('chart-desktop');
-    if (window.innerWidth <= 768) {
-        chartMobile.style.display = 'block';
-        chartDesktop.style.display = 'none';
-    } else {
-        chartMobile.style.display = 'none';
-        chartDesktop.style.display = 'block';
+document.getElementById('model-selector').addEventListener('change', (e) => {
+    selectedModel = e.target.value;
+    statusElement.textContent = `Switched to ${selectedModel.toUpperCase()} model`;
+});
+
+// Text-to-Speech
+function speakText(text) {
+    window.speechSynthesis.cancel();
+    for (let i=0;i<text.length;i++){
+        setTimeout(()=>{
+            const utterance = new SpeechSynthesisUtterance(text[i]);
+            utterance.rate = 0.8;
+            window.speechSynthesis.speak(utterance);
+        }, i*600);
     }
 }
-window.addEventListener('resize', handleResponsiveChart);
-handleResponsiveChart();
 
+// Health check
 async function checkBackendHealth() {
     try {
         const response = await fetch(`${API_URL}/health`);
         const data = await response.json();
-        
-        if (data.status === 'healthy') {
-            statusElement.textContent = 'Ready! You may start signing.';
-        } else {
-            throw new Error('Backend not healthy');
-        }
-    } catch (error) {
-        console.error('Backend health check failed:', error);
+        statusElement.textContent = (data.status === 'healthy') ? 'Ready! You may start signing.' : 'Backend not healthy';
+    } catch (err) {
+        console.error(err);
         statusElement.textContent = 'Cannot connect to backend. Please start the Flask server.';
     }
 }
 
-async function initializeHands() {
-    hands = new Hands({ 
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` 
-    });
-    hands.setOptions({ 
-        maxNumHands: 2, 
-        modelComplexity: 1, 
-        minDetectionConfidence: 0.5, 
-        minTrackingConfidence: 0.5 
-    });
+// ----------- Initialize MediaPipe Hands + Pose -----------
+async function initializeHandsPose() {
+    hands = new Hands({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
+
+    pose = new Pose({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    pose.setOptions({modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
+
     hands.onResults(onResults);
+    pose.onResults(onResults);
 }
 
-function extractKeypoints(results) {
-    let leftHand = Array(21*3).fill(0);
-    let rightHand = Array(21*3).fill(0);
-    
-    if (results.multiHandLandmarks && results.multiHandedness) {
-        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-            const handLandmarks = results.multiHandLandmarks[i];
-            const handedness = results.multiHandedness[i].label;
-            
-            const handArray = [];
-            for (let lm of handLandmarks) {
-                handArray.push(lm.x, lm.y, lm.z);
-            }
-            
-            if (handedness === 'Left') {
-                leftHand = handArray;
-            } else {
-                rightHand = handArray;
-            }
-        }
-    }
-    
-    return [...leftHand, ...rightHand];
-}
+// ----------- Keypoint extraction -----------
+function extractKeypoints(handsResults, poseResults) {
+    let poseArray = poseResults?.poseLandmarks?.flatMap(l => [l.x,l.y,l.z,l.visibility]) ?? new Array(33*4).fill(0);
+    let leftHandArray = new Array(21*3).fill(0);
+    let rightHandArray = new Array(21*3).fill(0);
 
-function isValidGesture(results) {
-    return results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
-}
-
-async function predict(keypoints, results) {
-    if (!predicting || !isValidGesture(results)) {
-        confidenceElement.textContent = 'Confidence: 0%';
-        return;
-    }
-    
-    sequence.push(keypoints);
-    if (sequence.length > SEQUENCE_LENGTH) {
-        sequence.shift();
-    }
-    
-    frameCount++;
-    
-    if (sequence.length === SEQUENCE_LENGTH && frameCount % PREDICTION_INTERVAL === 0) {
-        try {
-            const response = await fetch(`${API_URL}/predict`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sequence: sequence,
-                    model: selectedModel
-                })
-            });
-            
-            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
-            
-            const data = await response.json();
-            
-            const predictedLetter = data.prediction;
-            const confidence = data.confidence * 100;
-            
-            confidenceElement.textContent = `Confidence: ${confidence.toFixed(0)}%`;
-            
-            if (confidence >= 70) {
-                if (predictedLetter === lastPredictedLetter) {
-                    sameLetterCount++;
-                } else {
-                    lastPredictedLetter = predictedLetter;
-                    sameLetterCount = 1;
-                }
-                
-                if (sameLetterCount >= SAME_LETTER_THRESHOLD) {
-                    if (predictionElement.textContent === '-') {
-                        predictionElement.textContent = '';
-                    }
-                    
-                    const currentText = predictionElement.textContent;
-                    const lastChar = currentText.charAt(currentText.length - 1);
-                    
-                    if (lastChar !== predictedLetter) {
-                        predictionElement.textContent += predictedLetter;
-                    }
-                    
-                    sameLetterCount = 0;
-                }
-            }
-            
-        } catch (error) {
-            console.error('Prediction error:', error);
-            statusElement.textContent = 'Prediction failed.';
-        }
-    }
-}
-
-function onResults(results) {
-    canvasElement.width = videoElement.videoWidth;
-    canvasElement.height = videoElement.videoHeight;
-    
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    
-    if (results.multiHandLandmarks) {
-        for (const landmarks of results.multiHandLandmarks) {
-            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { 
-                color: '#00FF00', lineWidth: 2 
-            });
-            drawLandmarks(canvasCtx, landmarks, { 
-                color: '#FF0000', lineWidth: 1, radius: 3 
-            });
-        }
-        
-        const keypoints = extractKeypoints(results);
-        predict(keypoints, results);
-    } else {
-        confidenceElement.textContent = 'Confidence: 0%';
-    }
-    
-    canvasCtx.restore();
-}
-
-async function initializeCamera() {
-    try {
-        camera = new Camera(videoElement, {
-            onFrame: async () => { 
-                await hands.send({image: videoElement}); 
-            },
-            width: 1280,
-            height: 720
+    if (handsResults?.multiHandLandmarks && handsResults?.multiHandedness){
+        handsResults.multiHandLandmarks.forEach((landmarks, idx)=>{
+            const label = handsResults.multiHandedness[idx].label;
+            const arr = landmarks.flatMap(l => [l.x,l.y,l.z]);
+            if(label==='Left') leftHandArray = arr;
+            else if(label==='Right') rightHandArray = arr;
         });
-        
-        await camera.start();
-        statusElement.textContent = 'Camera ready! Initializing models...';
-        
-        await checkBackendHealth();
-        
-    } catch (error) {
-        console.error('Camera error:', error);
-        statusElement.textContent = 'Cannot access camera.';
+    }
+
+    return [...poseArray, ...leftHandArray, ...rightHandArray]; // 258 features
+}
+
+function isValidGesture(handsResults) {
+    return handsResults?.multiHandLandmarks?.length > 0;
+}
+
+// ----------- Prediction -----------
+async function predictSequence(keypoints, handsResults) {
+    if (!predicting || !isValidGesture(handsResults)) { confidenceElement.textContent = 'Confidence: 0%'; return; }
+    sequence.push(keypoints);
+    if (sequence.length > SEQUENCE_LENGTH) sequence.shift();
+    frameCount++;
+
+    if (sequence.length===SEQUENCE_LENGTH && frameCount%PREDICTION_INTERVAL===0){
+        try {
+            const res = await fetch(`${API_URL}/predict`,{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({sequence, model:selectedModel})
+            });
+            const data = await res.json();
+            const predictedLetter = data.prediction;
+            const confidence = data.confidence*100;
+            confidenceElement.textContent = `Confidence: ${confidence.toFixed(0)}%`;
+
+            if(confidence>=70){
+                if(predictedLetter===lastPredictedLetter) sameLetterCount++;
+                else { lastPredictedLetter=predictedLetter; sameLetterCount=1; }
+
+                if(sameLetterCount>=SAME_LETTER_THRESHOLD){
+                    if(predictionElement.textContent==='-') predictionElement.textContent='';
+                    const currentText = predictionElement.textContent;
+                    if(currentText.slice(-1)!==predictedLetter) predictionElement.textContent+=predictedLetter;
+                    sameLetterCount=0;
+                }
+            }
+        } catch(err){
+            console.error('Prediction error:', err);
+            statusElement.textContent='Prediction failed.';
+        }
     }
 }
 
-async function initialize() {
-    await initializeHands();
+// ----------- Draw landmarks -----------
+function drawLandmarks(handsResults, poseResults){
+    canvasCtx.clearRect(0,0,canvasElement.width,canvasElement.height);
+    canvasCtx.drawImage(videoElement,0,0,canvasElement.width,canvasElement.height);
+
+    if(poseResults?.poseLandmarks) drawConnectors(canvasCtx, poseResults.poseLandmarks, POSE_CONNECTIONS,{color:'white',lineWidth:2}), drawLandmarks(canvasCtx,poseResults.poseLandmarks,{color:'red',lineWidth:1});
+    if(handsResults?.multiHandLandmarks) handsResults.multiHandLandmarks.forEach(l=>drawConnectors(canvasCtx,l,HAND_CONNECTIONS,{color:'white',lineWidth:2}),drawLandmarks(canvasCtx,l,{color:'green',lineWidth:1}));
+}
+
+// ----------- Combined Results callback -----------
+let latestHandsResults=null, latestPoseResults=null;
+function onResults(results){
+    if(results.poseLandmarks) latestPoseResults=results;
+    if(results.multiHandLandmarks) latestHandsResults=results;
+
+    drawLandmarks(latestHandsResults, latestPoseResults);
+
+    const keypoints = extractKeypoints(latestHandsResults, latestPoseResults);
+    predictSequence(keypoints, latestHandsResults);
+}
+
+// ----------- Initialize Camera -----------
+async function initializeCamera(){
+    camera = new Camera(videoElement,{
+        onFrame: async ()=>{
+            await hands.send({image:videoElement});
+            await pose.send({image:videoElement});
+        },
+        width:1280,
+        height:720
+    });
+    await camera.start();
+    statusElement.textContent='Camera ready! Initializing models...';
+    await checkBackendHealth();
+}
+
+// ----------- Initialize everything -----------
+async function initialize(){
+    await initializeHandsPose();
     await initializeCamera();
     updatePredictionStatus();
 }
-
 initialize();
 </script>
 </body>
