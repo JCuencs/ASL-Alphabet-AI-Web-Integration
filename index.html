@@ -162,6 +162,7 @@ const PREDICTION_INTERVAL = 10;
 let lastPredictedLetter = '';
 let sameLetterCount = 0;
 const SAME_LETTER_THRESHOLD = 3;
+const SESSION_ID = 'session_' + Date.now();
 
 // Store latest results from both models
 let latestHandsResults = null;
@@ -178,9 +179,17 @@ toggleBtn.addEventListener('click', () => {
         toggleBtn.textContent = 'Stop';
         toggleBtn.style.backgroundColor = '#f44336';
         sequence = [];
+        lastPredictedLetter = '';
+        sameLetterCount = 0;
     } else {
         toggleBtn.textContent = 'Start';
         toggleBtn.style.backgroundColor = '#6cbeed';
+        // Reset session state on backend
+        fetch(`${API_URL}/reset_session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: SESSION_ID })
+        });
     }
     
     updatePredictionStatus();
@@ -191,6 +200,13 @@ resetBtn.addEventListener('click', () => {
     lastPredictedLetter = '';
     sameLetterCount = 0;
     confidenceElement.textContent = 'Confidence: 0%';
+    sequence = [];
+    // Reset session state on backend
+    fetch(`${API_URL}/reset_session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: SESSION_ID })
+    });
 });
 
 speakBtn.addEventListener('click', () => {
@@ -358,12 +374,15 @@ function extractKeypoints(handsResults, poseResults) {
     return [...poseArray, ...leftHand, ...rightHand];
 }
 
-function isValidGesture(handsResults, poseResults) {
+function hasHands(handsResults) {
     return (handsResults && handsResults.multiHandLandmarks && handsResults.multiHandLandmarks.length > 0);
 }
 
 async function predict(keypoints, handsResults, poseResults) {
-    if (!predicting || !isValidGesture(handsResults, poseResults)) {
+    const handsPresent = hasHands(handsResults);
+    
+    // Only update confidence if predicting is active AND hands are present
+    if (!predicting || !handsPresent) {
         confidenceElement.textContent = 'Confidence: 0%';
         return;
     }
@@ -381,7 +400,10 @@ async function predict(keypoints, handsResults, poseResults) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sequence: sequence
+                    sequence: sequence,
+                    session_id: SESSION_ID,
+                    has_hands: handsPresent,
+                    is_predicting: predicting
                 })
             });
             
@@ -389,33 +411,39 @@ async function predict(keypoints, handsResults, poseResults) {
             
             const data = await response.json();
             
-            const predictedLetter = data.prediction;
-            const confidence = data.confidence * 100;
-            
-            confidenceElement.textContent = `Confidence: ${confidence.toFixed(0)}%`;
-            
-            if (confidence >= 70) {
-                if (predictedLetter === lastPredictedLetter) {
-                    sameLetterCount++;
-                } else {
-                    lastPredictedLetter = predictedLetter;
-                    sameLetterCount = 1;
-                }
+            // Only show confidence if actively predicting
+            if (predicting && data.is_actively_signing) {
+                const confidence = data.confidence * 100;
+                confidenceElement.textContent = `Confidence: ${confidence.toFixed(0)}%`;
                 
-                if (sameLetterCount >= SAME_LETTER_THRESHOLD) {
-                    if (predictionElement.textContent === '-') {
-                        predictionElement.textContent = '';
+                // Only add letter if backend says we should
+                if (data.should_add_letter && data.prediction) {
+                    const predictedLetter = data.prediction;
+                    
+                    if (predictedLetter === lastPredictedLetter) {
+                        sameLetterCount++;
+                    } else {
+                        lastPredictedLetter = predictedLetter;
+                        sameLetterCount = 1;
                     }
                     
-                    const currentText = predictionElement.textContent;
-                    const lastChar = currentText.charAt(currentText.length - 1);
-                    
-                    if (lastChar !== predictedLetter) {
-                        predictionElement.textContent += predictedLetter;
+                    if (sameLetterCount >= SAME_LETTER_THRESHOLD) {
+                        if (predictionElement.textContent === '-') {
+                            predictionElement.textContent = '';
+                        }
+                        
+                        const currentText = predictionElement.textContent;
+                        const lastChar = currentText.charAt(currentText.length - 1);
+                        
+                        if (lastChar !== predictedLetter) {
+                            predictionElement.textContent += predictedLetter;
+                        }
+                        
+                        sameLetterCount = 0;
                     }
-                    
-                    sameLetterCount = 0;
                 }
+            } else {
+                confidenceElement.textContent = 'Confidence: 0%';
             }
             
         } catch (error) {
