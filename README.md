@@ -1,1 +1,0 @@
-# ASL-Alphabet-AI-Web-Integration
