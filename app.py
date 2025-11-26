@@ -4,6 +4,7 @@ import numpy as np
 import pickle
 import os
 from pathlib import Path
+from collections import deque
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
@@ -24,12 +25,20 @@ except ImportError:
 _model = None
 _scaler = None
 
+# Prediction state management (per session)
+prediction_states = {}
+
 def get_model():
     """Lazy load LSTM model"""
     global _model
     if _model is None:
         try:
-            from keras.models import load_model
+            # Try Keras 3 import first, fallback to Keras 2
+            try:
+                from keras.models import load_model
+            except ImportError:
+                from tensorflow.keras.models import load_model
+            
             print("Loading LSTM model...")
             _model = load_model(MODEL_PATH)
             print(f"✓ LSTM model loaded successfully")
@@ -53,6 +62,35 @@ def get_scaler():
             _scaler = False
     return _scaler if _scaler is not False else None
 
+def get_or_create_session_state(session_id):
+    """Get or create prediction state for a session"""
+    if session_id not in prediction_states:
+        prediction_states[session_id] = {
+            'predictions_history': deque(maxlen=10),
+            'confidence_history': deque(maxlen=10),
+            'hand_presence_counter': 0,
+            'is_actively_signing': False
+        }
+    return prediction_states[session_id]
+
+def apply_temporal_smoothing(prediction, confidence, session_state):
+    """Apply temporal smoothing to predictions"""
+    session_state['predictions_history'].append(prediction)
+    session_state['confidence_history'].append(confidence)
+    
+    if len(session_state['predictions_history']) < 3:
+        return prediction, confidence
+    
+    # Check if prediction is stable across recent frames
+    recent_predictions = list(session_state['predictions_history'])[-5:]
+    most_common = max(set(recent_predictions), key=recent_predictions.count)
+    
+    # If prediction appears frequently with high confidence, use it
+    if recent_predictions.count(most_common) >= 3:
+        return most_common, np.mean(list(session_state['confidence_history'])[-3:])
+    
+    return prediction, confidence
+
 @app.route('/')
 def index():
     return send_from_directory('.', 'index.html')
@@ -70,6 +108,30 @@ def predict():
             return jsonify({'error': 'No sequence provided'}), 400
         
         sequence = np.array(data['sequence'])
+        session_id = data.get('session_id', 'default')
+        has_hands = data.get('has_hands', False)
+        is_predicting = data.get('is_predicting', False)
+        
+        # Get session state
+        session_state = get_or_create_session_state(session_id)
+        
+        # Update hand presence counter
+        if has_hands and is_predicting:
+            session_state['hand_presence_counter'] += 1
+            if session_state['hand_presence_counter'] >= 5:  # min_hand_presence
+                session_state['is_actively_signing'] = True
+        else:
+            session_state['hand_presence_counter'] = 0
+            session_state['is_actively_signing'] = False
+        
+        # Only predict if actively signing
+        if not session_state['is_actively_signing'] or not is_predicting:
+            return jsonify({
+                'prediction': None,
+                'confidence': 0.0,
+                'should_add_letter': False,
+                'is_actively_signing': session_state['is_actively_signing']
+            })
         
         # Lazy load model
         model = get_model()
@@ -108,23 +170,47 @@ def predict():
         predicted_index = int(np.argmax(predictions))
         confidence = float(predictions[predicted_index])
         
+        # Apply temporal smoothing
+        predicted_index, confidence = apply_temporal_smoothing(
+            predicted_index, confidence, session_state
+        )
+        
         # Get predicted letter
         if predicted_index < len(ALPHABET):
             predicted_letter = ALPHABET[predicted_index]
         else:
             predicted_letter = '?'
         
+        # Determine if letter should be added (70% confidence threshold)
+        should_add_letter = confidence >= 0.7 and session_state['is_actively_signing']
+        
         return jsonify({
             'prediction': predicted_letter,
             'confidence': confidence,
             'all_probabilities': predictions.tolist(),
-            'predicted_index': predicted_index
+            'predicted_index': predicted_index,
+            'should_add_letter': should_add_letter,
+            'is_actively_signing': session_state['is_actively_signing']
         })
     
     except Exception as e:
         print(f"Prediction error: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/reset_session', methods=['POST'])
+def reset_session():
+    """Reset session state"""
+    try:
+        data = request.json
+        session_id = data.get('session_id', 'default')
+        
+        if session_id in prediction_states:
+            del prediction_states[session_id]
+        
+        return jsonify({'status': 'success'})
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/health', methods=['GET'])
