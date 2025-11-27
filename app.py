@@ -7,7 +7,20 @@ from pathlib import Path
 from collections import deque
 
 app = Flask(__name__, static_folder='.')
-CORS(app)
+
+# Enhanced CORS configuration for production
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "https://*.vercel.app",  # All Vercel deployments
+            "http://localhost:*",     # Local development
+            "https://your-domain.com" # Your custom domain if any
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+        "supports_credentials": True
+    }
+})
 
 # Paths
 MODEL_PATH = 'trained_model/best_model.h5'
@@ -99,8 +112,12 @@ def index():
 def serve_static(path):
     return send_from_directory('.', path)
 
-@app.route('/api/predict', methods=['POST'])
+@app.route('/api/predict', methods=['POST', 'OPTIONS'])
 def predict():
+    # Handle preflight request
+    if request.method == 'OPTIONS':
+        return '', 204
+        
     try:
         data = request.json
         
@@ -199,9 +216,13 @@ def predict():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/reset_session', methods=['POST'])
+@app.route('/api/reset_session', methods=['POST', 'OPTIONS'])
 def reset_session():
     """Reset session state"""
+    # Handle preflight request
+    if request.method == 'OPTIONS':
+        return '', 204
+        
     try:
         data = request.json
         session_id = data.get('session_id', 'default')
