@@ -12,13 +12,14 @@ app = Flask(__name__, static_folder='.')
 CORS(app, resources={
     r"/api/*": {
         "origins": [
-            "https://*.vercel.app",  # All Vercel deployments
-            "http://localhost:*",     # Local development
-            "https://your-domain.com" # Your custom domain if any
+            "https://asl-alphabet-ai.vercel.app",
+            "https://asl-alphabet-ai.duckdns.org",
+            "http://localhost:5000",
+            "http://localhost:3000",
         ],
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type"],
-        "supports_credentials": True
+        "supports_credentials": False
     }
 })
 
