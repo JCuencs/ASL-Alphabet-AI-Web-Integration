@@ -28,16 +28,6 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
   border-radius: 15px;
 }
 
-#canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  border-radius: 15px;
-}
-
 .prediction-box { background: white; border-radius: 15px; padding: 30px; box-shadow: 0 8px 20px rgba(0,0,0,0.15); text-align: center; }
 .prediction-label { font-size: 1.2rem; color: #333; margin-bottom: 15px; font-weight: 600; }
 .prediction-text {
@@ -59,7 +49,7 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
 .chart-container { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.15); flex: 0 0 400px; }
 .chart-title { font-size: 1.3rem; color: #333; margin-bottom: 15px; text-align: center; font-weight: 600; }
 .chart-image { width: 100%; height: auto; border-radius: 10px; }
-.status { text-align: center; padding: 15px; background: rgba(255,255,255,0.2); border-radius: 10px; color: white; margin-bottom: 20px; font-weight: 500; }
+.status { text-align: center; padding: 15px; background: rgba(255,255,255,0.2); border-radius: 10px; color: white; margin-bottom: 20px; font-weight: 500; font-size: 0.9rem; }
 .confidence-container {
   position: absolute;
   bottom: 30px;
@@ -83,21 +73,18 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
   .chart-container { flex: none; width: 100%; }
   .prediction-text { font-size: 2rem; min-height: 60px; }
   .button-group button { min-width: 110px; padding: 10px 16px; font-size: 0.9rem; }
-  #canvas { top: 0; left: 0; width: 100%; height: 100%; }
 }
 </style>
 </head>
 <body>
 <div class="container">
 <h1>Sign Language Alphabet</h1>
-
-<div class="status" id="status">Initializing camera...</div>
+<div class="status" id="status">Initializing...</div>
 
 <div class="main-content">
     <div class="left-section">
         <div class="video-container">
             <video id="webcam" autoplay playsinline></video>
-            <canvas id="canvas"></canvas>
             <div class="confidence-container">
                 <span id="confidence">Confidence: 0%</span>
             </div>
@@ -109,24 +96,16 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
             <div class="prediction-status" id="prediction-status">Status: Inactive</div>
 
             <div class="button-group">
-                <button id="toggle-btn">Start</button>
+                <button id="toggle-btn" disabled>Start</button>
                 <button id="reset-btn">Clear</button>
                 <button id="speak-btn">Speak</button>
             </div>
         </div>
-
-        <div class="chart-container" id="chart-mobile" style="display: none;">
-            <div class="chart-title">Sign Language Guide</div>
-            <img src="/ASL-Alphabet-poster-flashcards.png" 
-                 alt="Sign Language Alphabet Chart" 
-                 class="chart-image"
-                 onerror="this.src='https://www.abcya.com/media/2020/11/sign-language-alphabet-reference-sheet.jpg'">
-        </div>
     </div>
 
-    <div class="chart-container" id="chart-desktop">
+    <div class="chart-container">
         <div class="chart-title">Sign Language Guide</div>
-        <img src="/ASL-Alphabet-poster-flashcards.png" 
+        <img src="./ASL-Alphabet-poster-flashcards.png"
              alt="Sign Language Alphabet Chart" 
              class="chart-image"
              onerror="this.src='https://www.abcya.com/media/2020/11/sign-language-alphabet-reference-sheet.jpg'">
@@ -134,79 +113,179 @@ h1 { text-align: center; color: white; font-size: 2.5rem; margin-bottom: 30px; t
 </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
 
 <script>
-const API_URL = 'https://asl-alphabet-ai.duckdns.org/api';
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+// Option 1: Local model files (include tm_model folder in your deployment)
+const MODEL_URL = "./tm_model/";
 
-let hands;
-let pose;
-let camera;
-const videoElement = document.getElementById('webcam');
-const canvasElement = document.getElementById('canvas');
-const canvasCtx = canvasElement.getContext('2d');
+// Option 2: Use Teachable Machine cloud hosting (get this URL from TM export)
+// const MODEL_URL = "https://teachablemachine.withgoogle.com/models/YOUR_MODEL_ID/";
+
+let model;
+let maxPredictions;
+let webcam;
+let isRunning = false;
+
 const predictionElement = document.getElementById('prediction');
 const statusElement = document.getElementById('status');
 const confidenceElement = document.getElementById('confidence');
 const predictionStatusElement = document.getElementById('prediction-status');
-
-let sequence = [];
-const SEQUENCE_LENGTH = 30;
-let predicting = false;
-let frameCount = 0;
-const PREDICTION_INTERVAL = 10;
-let lastPredictedLetter = '';
-let sameLetterCount = 0;
-const SAME_LETTER_THRESHOLD = 3;
-const SESSION_ID = 'session_' + Date.now();
-
-// Store latest results from both models
-let latestHandsResults = null;
-let latestPoseResults = null;
-
 const toggleBtn = document.getElementById('toggle-btn');
 const resetBtn = document.getElementById('reset-btn');
 const speakBtn = document.getElementById('speak-btn');
 
-toggleBtn.addEventListener('click', () => { 
+let lastPredictedLetter = '';
+let sameLetterCount = 0;
+const SAME_LETTER_THRESHOLD = 3;
+let predicting = false;
+
+// Session state for tracking
+let sessionState = {
+    consecutivePredictions: 0,
+    lastPredictionTime: 0,
+    minConsecutiveFrames: 5
+};
+
+async function init() {
+    statusElement.textContent = 'Loading model...';
+    
+    try {
+        // Load the model and metadata
+        const modelURL = MODEL_URL + "model.json";
+        const metadataURL = MODEL_URL + "metadata.json";
+        
+        model = await tmImage.load(modelURL, metadataURL);
+        maxPredictions = model.getTotalClasses();
+        
+        statusElement.textContent = 'Model loaded! Initializing camera...';
+        
+        // Setup webcam
+        const flip = true;
+        webcam = new tmImage.Webcam(640, 480, flip);
+        await webcam.setup();
+        await webcam.play();
+        
+        // Append webcam canvas to video container
+        const videoContainer = document.querySelector('.video-container');
+        const existingWebcam = document.getElementById('webcam');
+        existingWebcam.style.display = 'none';
+        videoContainer.appendChild(webcam.canvas);
+        webcam.canvas.style.width = '100%';
+        webcam.canvas.style.height = 'auto';
+        webcam.canvas.style.borderRadius = '15px';
+        
+        statusElement.textContent = 'Ready! Click Start to begin.';
+        statusElement.style.background = 'rgba(76, 175, 80, 0.8)';
+        toggleBtn.disabled = false;
+        
+        updatePredictionStatus();
+        
+    } catch (error) {
+        console.error('Initialization error:', error);
+        statusElement.textContent = 'Error: ' + error.message;
+        statusElement.style.background = 'rgba(244, 67, 54, 0.8)';
+    }
+}
+
+async function loop() {
+    webcam.update();
+    if (predicting) {
+        await predict();
+    }
+    window.requestAnimationFrame(loop);
+}
+
+async function predict() {
+    try {
+        const prediction = await model.predict(webcam.canvas);
+        
+        // Find the class with highest probability
+        let maxProb = 0;
+        let predictedClass = '';
+        
+        for (let i = 0; i < prediction.length; i++) {
+            if (prediction[i].probability > maxProb) {
+                maxProb = prediction[i].probability;
+                predictedClass = prediction[i].className;
+            }
+        }
+        
+        // Update confidence display
+        const confidence = maxProb * 100;
+        confidenceElement.textContent = `Confidence: ${confidence.toFixed(0)}%`;
+        
+        // Only add letter if confidence is high enough
+        if (maxProb > 0.7) {
+            sessionState.consecutivePredictions++;
+            
+            if (predictedClass === lastPredictedLetter) {
+                sameLetterCount++;
+            } else {
+                lastPredictedLetter = predictedClass;
+                sameLetterCount = 1;
+            }
+            
+            // Check if we should add the letter
+            const timeSinceLastPrediction = Date.now() - sessionState.lastPredictionTime;
+            const shouldAddLetter = timeSinceLastPrediction > 800; // 800ms cooldown
+            
+            if (sameLetterCount >= SAME_LETTER_THRESHOLD && 
+                shouldAddLetter && 
+                sessionState.consecutivePredictions >= sessionState.minConsecutiveFrames) {
+                
+                if (predictionElement.textContent === '-') {
+                    predictionElement.textContent = '';
+                }
+                
+                const currentText = predictionElement.textContent;
+                const lastChar = currentText.charAt(currentText.length - 1);
+                
+                // Only add if it's different from the last character
+                if (lastChar !== predictedClass) {
+                    predictionElement.textContent += predictedClass;
+                    sessionState.lastPredictionTime = Date.now();
+                }
+                
+                sameLetterCount = 0;
+            }
+        } else {
+            sessionState.consecutivePredictions = 0;
+            confidenceElement.textContent = 'Confidence: 0%';
+        }
+        
+    } catch (error) {
+        console.error('Prediction error:', error);
+    }
+}
+
+toggleBtn.addEventListener('click', () => {
     predicting = !predicting;
     
     if (predicting) {
         toggleBtn.textContent = 'Stop';
         toggleBtn.style.backgroundColor = '#f44336';
-        sequence = [];
         lastPredictedLetter = '';
         sameLetterCount = 0;
+        sessionState.consecutivePredictions = 0;
+        sessionState.lastPredictionTime = 0;
     } else {
         toggleBtn.textContent = 'Start';
         toggleBtn.style.backgroundColor = '#6cbeed';
-        // Reset session state on backend
-        fetch(`${API_URL}/reset_session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: SESSION_ID })
-        });
+        confidenceElement.textContent = 'Confidence: 0%';
     }
     
     updatePredictionStatus();
 });
 
-resetBtn.addEventListener('click', () => { 
-    predictionElement.textContent = '-'; 
+resetBtn.addEventListener('click', () => {
+    predictionElement.textContent = '-';
     lastPredictedLetter = '';
     sameLetterCount = 0;
     confidenceElement.textContent = 'Confidence: 0%';
-    sequence = [];
-    // Reset session state on backend
-    fetch(`${API_URL}/reset_session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: SESSION_ID })
-    });
+    sessionState.consecutivePredictions = 0;
+    sessionState.lastPredictionTime = 0;
 });
 
 speakBtn.addEventListener('click', () => {
@@ -245,22 +324,25 @@ function speakText(text) {
 }
 
 function checkForWords(text) {
-    const commonWords = [
-        'HELLO', 'HI', 'BYE', 'THANKS', 'PLEASE', 'YES', 'NO',
-        'HELP', 'STOP', 'GO', 'COME', 'GOOD', 'BAD', 'OK',
-        'LOVE', 'LIKE', 'WANT', 'NEED', 'HAVE', 'GET', 'GIVE'
-    ];
-    
+    // Since we're only using A-E, no complete words will be formed
+    // But we can still check for common patterns or sequences
     const textUpper = text.toUpperCase();
+    
+    // Check for simple patterns with A-E
+    const patterns = {
+        'BED': 'BED',
+        'BAD': 'BAD',
+        'DAD': 'DAD',
+        'CAB': 'CAB',
+        'ACE': 'ACE',
+        'BEE': 'BEE',
+        'DEE': 'DEE'
+    };
+    
     const foundWords = [];
     
-    if (commonWords.includes(textUpper)) {
-        foundWords.push(textUpper);
-        return foundWords;
-    }
-    
-    for (let word of commonWords) {
-        if (textUpper.includes(word)) {
+    for (let [pattern, word] of Object.entries(patterns)) {
+        if (textUpper.includes(pattern)) {
             foundWords.push(word);
         }
     }
@@ -278,261 +360,10 @@ function updatePredictionStatus() {
     }
 }
 
-function handleResponsiveChart() {
-    const chartMobile = document.getElementById('chart-mobile');
-    const chartDesktop = document.getElementById('chart-desktop');
-    if (window.innerWidth <= 768) {
-        chartMobile.style.display = 'block';
-        chartDesktop.style.display = 'none';
-    } else {
-        chartMobile.style.display = 'none';
-        chartDesktop.style.display = 'block';
-    }
-}
-window.addEventListener('resize', handleResponsiveChart);
-handleResponsiveChart();
-
-async function checkBackendHealth() {
-    try {
-        const response = await fetch(`${API_URL}/health`);
-        const data = await response.json();
-        
-        if (data.status === 'healthy') {
-            statusElement.textContent = 'Backend connected! Model ready.';
-        } else {
-            throw new Error('Backend not healthy');
-        }
-    } catch (error) {
-        console.error('Backend health check failed:', error);
-        statusElement.textContent = 'Cannot connect to backend. Please start the Flask server.';
-    }
-}
-
-async function initializeMediaPipe() {
-    // Initialize Hands
-    hands = new Hands({ 
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` 
-    });
-    hands.setOptions({ 
-        maxNumHands: 2, 
-        modelComplexity: 1, 
-        minDetectionConfidence: 0.5, 
-        minTrackingConfidence: 0.5 
-    });
-    hands.onResults((results) => {
-        latestHandsResults = results;
-    });
-    
-    // Initialize Pose
-    pose = new Pose({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-    });
-    pose.setOptions({
-        modelComplexity: 1,
-        smoothLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
-    pose.onResults((results) => {
-        latestPoseResults = results;
-    });
-}
-
-function extractKeypoints(handsResults, poseResults) {
-    // Extract pose keypoints (33 landmarks × 4 features = 132)
-    let poseArray = new Array(33 * 4).fill(0);
-    if (poseResults && poseResults.poseLandmarks) {
-        poseArray = [];
-        for (let landmark of poseResults.poseLandmarks) {
-            poseArray.push(landmark.x, landmark.y, landmark.z, landmark.visibility);
-        }
-    }
-    
-    // Extract hand keypoints (21 landmarks × 3 features = 63 each)
-    let leftHand = new Array(21 * 3).fill(0);
-    let rightHand = new Array(21 * 3).fill(0);
-    
-    if (handsResults && handsResults.multiHandLandmarks && handsResults.multiHandedness) {
-        for (let i = 0; i < handsResults.multiHandLandmarks.length; i++) {
-            const handLandmarks = handsResults.multiHandLandmarks[i];
-            const handedness = handsResults.multiHandedness[i].label;
-            
-            const handArray = [];
-            for (let lm of handLandmarks) {
-                handArray.push(lm.x, lm.y, lm.z);
-            }
-            
-            if (handedness === 'Left') {
-                leftHand = handArray;
-            } else {
-                rightHand = handArray;
-            }
-        }
-    }
-    
-    // Combine: pose (132) + left_hand (63) + right_hand (63) = 258 features
-    return [...poseArray, ...leftHand, ...rightHand];
-}
-
-function hasHands(handsResults) {
-    return (handsResults && handsResults.multiHandLandmarks && handsResults.multiHandLandmarks.length > 0);
-}
-
-async function predict(keypoints, handsResults, poseResults) {
-    const handsPresent = hasHands(handsResults);
-    
-    // Only update confidence if predicting is active AND hands are present
-    if (!predicting || !handsPresent) {
-        confidenceElement.textContent = 'Confidence: 0%';
-        return;
-    }
-    
-    sequence.push(keypoints);
-    if (sequence.length > SEQUENCE_LENGTH) {
-        sequence.shift();
-    }
-    
-    frameCount++;
-    
-    if (sequence.length === SEQUENCE_LENGTH && frameCount % PREDICTION_INTERVAL === 0) {
-        try {
-            const response = await fetch(`${API_URL}/predict`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sequence: sequence,
-                    session_id: SESSION_ID,
-                    has_hands: handsPresent,
-                    is_predicting: predicting
-                })
-            });
-            
-            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
-            
-            const data = await response.json();
-            
-            // Only show confidence if actively predicting
-            if (predicting && data.is_actively_signing) {
-                const confidence = data.confidence * 100;
-                confidenceElement.textContent = `Confidence: ${confidence.toFixed(0)}%`;
-                
-                // Only add letter if backend says we should
-                if (data.should_add_letter && data.prediction) {
-                    const predictedLetter = data.prediction;
-                    
-                    if (predictedLetter === lastPredictedLetter) {
-                        sameLetterCount++;
-                    } else {
-                        lastPredictedLetter = predictedLetter;
-                        sameLetterCount = 1;
-                    }
-                    
-                    if (sameLetterCount >= SAME_LETTER_THRESHOLD) {
-                        if (predictionElement.textContent === '-') {
-                            predictionElement.textContent = '';
-                        }
-                        
-                        const currentText = predictionElement.textContent;
-                        const lastChar = currentText.charAt(currentText.length - 1);
-                        
-                        if (lastChar !== predictedLetter) {
-                            predictionElement.textContent += predictedLetter;
-                        }
-                        
-                        sameLetterCount = 0;
-                    }
-                }
-            } else {
-                confidenceElement.textContent = 'Confidence: 0%';
-            }
-            
-        } catch (error) {
-            console.error('Prediction error:', error);
-            statusElement.textContent = 'Prediction failed. Check if backend is running.';
-        }
-    }
-}
-
-async function onResults() {
-    canvasElement.width = videoElement.videoWidth;
-    canvasElement.height = videoElement.videoHeight;
-    
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    
-    // Draw pose landmarks
-    if (latestPoseResults && latestPoseResults.poseLandmarks) {
-        drawConnectors(canvasCtx, latestPoseResults.poseLandmarks, POSE_CONNECTIONS, { 
-            color: '#00FF00', lineWidth: 2 
-        });
-        drawLandmarks(canvasCtx, latestPoseResults.poseLandmarks, { 
-            color: '#FF0000', lineWidth: 1, radius: 2 
-        });
-    }
-    
-    // Draw hand landmarks
-    if (latestHandsResults && latestHandsResults.multiHandLandmarks) {
-        for (const landmarks of latestHandsResults.multiHandLandmarks) {
-            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { 
-                color: '#00FF00', lineWidth: 2 
-            });
-            drawLandmarks(canvasCtx, landmarks, { 
-                color: '#FF0000', lineWidth: 1, radius: 3 
-            });
-        }
-        
-        const keypoints = extractKeypoints(latestHandsResults, latestPoseResults);
-        predict(keypoints, latestHandsResults, latestPoseResults);
-    } else {
-        confidenceElement.textContent = 'Confidence: 0%';
-    }
-    
-    canvasCtx.restore();
-}
-
-async function processFrame() {
-    // Send frame to both models
-    await hands.send({image: videoElement});
-    await pose.send({image: videoElement});
-    
-    // Draw results
-    onResults();
-    
-    // Continue processing
-    requestAnimationFrame(processFrame);
-}
-
-async function initializeCamera() {
-    try {
-        camera = new Camera(videoElement, {
-            onFrame: async () => {
-                // This will be handled by processFrame
-            },
-            width: 1280,
-            height: 720
-        });
-        
-        await camera.start();
-        statusElement.textContent = 'Camera ready! Checking backend...';
-        
-        await checkBackendHealth();
-        
-        // Start processing loop
-        processFrame();
-        
-    } catch (error) {
-        console.error('Camera error:', error);
-        statusElement.textContent = 'Camera access denied. Please allow camera access.';
-    }
-}
-
-async function initialize() {
-    await initializeMediaPipe();
-    await initializeCamera();
-    updatePredictionStatus();
-}
-
-initialize();
+// Initialize on page load
+init().then(() => {
+    loop();
+});
 </script>
 </body>
 </html>
